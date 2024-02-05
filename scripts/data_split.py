@@ -110,7 +110,7 @@ def main():
     args = parser.parse_args()
 
     # Load the config file 
-    config, config_name = load_configs(args.config)
+    config, _ = load_configs(args.config)
 
     # Set the seed for generating random numbers
     utils_misc.seed_all(config.train.seed)
