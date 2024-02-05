@@ -21,21 +21,6 @@ def load_configs(config_path):
 
     return config, config_name
 
-
-def setup_logging(config_name, input_args, config):
-
-    log_dir = utils_misc.get_new_log_dir(input_args.logdir, prefix=config_name, tag=input_args.tag)
-    ckpt_dir = os.path.join(log_dir, 'checkpoints')
-    os.makedirs(ckpt_dir, exist_ok=True)
-    logger = utils_misc.get_logger('train', log_dir)
-    logger.info(input_args)
-    logger.info(config)
-    shutil.copyfile(input_args.config, os.path.join(log_dir, os.path.basename(input_args.config)))
-    shutil.copytree('models', os.path.join(log_dir, 'models'))
-
-    return logger
-
-
 class ProteinLigandData(Data):
 
     def __init__(self, *args, **kwargs):
@@ -122,8 +107,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('config', type=str)
     parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--logdir', type=str, default='logs')
-    parser.add_argument('--tag', type=str, default='')
     args = parser.parse_args()
 
     # Load the config file 
@@ -131,9 +114,6 @@ def main():
 
     # Set the seed for generating random numbers
     utils_misc.seed_all(config.train.seed)
-
-    # Set up the logging and TensorBoard Writer
-    logger, writer = setup_logging(config_name, args, config)
 
     # Data transformers 
     portein_featurizer = FeaturizeProteinAtom()
@@ -144,10 +124,11 @@ def main():
     ])
 
     # Datasets and loaders
-    logger.info('Loading dataset ...')
+    print('Loading dataset ...')
     dataset, subsets = get_dataset(
         config = config.dataset,
         transform = transform,
         emb_path = config.dataset.emb_path if 'emb_path' in config.dataset else None,
         heavy_only = config.dataset.heavy_only
     )
+    train_set, val_set, test_set = subsets['train'], subsets['val'], subsets['test']
