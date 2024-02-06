@@ -54,12 +54,14 @@ For example, using the PDBBind v2020 dataset, the following steps are needed:
    python utils/extract_pdbbind_pockets.py --source data/pdbbind_v2020 --subset refined --refined_index_pkl data/pdbbind_v2020/pocket_10_refined/index.pkl
    ```
 3. **Dataset Splitting**:
-   Use the following command to split the dataset. Replace `{YEAR}` with the dataset year.
+   We use the PDBbind core set (CASF-2016) as the test set. This file can be download from [PDBbind core set](https://pdbbind.oss-cn-hangzhou.aliyuncs.com/download/CASF-2016.tar.gz).
+
+   Use the following command to split the dataset between training and validation sets. Replace `{YEAR}` with the dataset year.
    ```bash
-   python utils/pdbbind_split.py --index_path data/pdbbind_v{YEAR}/pocket_10_refined/index.pkl 
+   python utils/pdbbind_split.py --index_path data/pdbbind_v{YEAR}/pocket_10_refined/index.pkl --split_mode coreset --test_path data/pdbbind_v{YEAR}/CASF-2016/coreset
    ```
    For PDBBind v2020, it becomes:
    ```bash
-    python utils/pdbbind_split.py --index_path data/pdbbind_v2020/pocket_10_refined/index.pkl 
+    python utils/pdbbind_split.py --index_path data/pdbbind_v2020/pocket_10_refined/index.pkl --split_mode coreset --test_path data/pdbbind_v2020/CASF-2016/coreset
    ```
 
