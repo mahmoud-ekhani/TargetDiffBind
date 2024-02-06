@@ -83,7 +83,7 @@ def parse_sdf_file_mol(path, heavy_only=True, mol=None):
         accum_pos += np.array([x, y, z]) * atomic_weight
         accum_mass += atomic_weight
     center_of_mass = np.array(accum_pos / accum_mass, dtype=np.float32)
-    element = np.array(element, dtype=np.int)
+    element = np.array(element, dtype=np.int32)
     pos = np.array(pos, dtype=np.float32)
 
     row, col, edge_type = [], [], []
@@ -241,7 +241,7 @@ class PDBProtein(object):
             'element': np.array(self.element, dtype=np.int64),
             'molecule_name': self.title,
             'pos': np.array(self.pos, dtype=np.float32),
-            'is_backbone': np.array(self.is_backbone, dtype=np.bool),
+            'is_backbone': np.array(self.is_backbone, dtype=np.bool_),
             'atom_name': self.atom_name,
             'atom_to_aa_type': np.array(self.atom_to_aa_type, dtype=np.int64)
         }
