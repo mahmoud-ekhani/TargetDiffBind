@@ -8,11 +8,12 @@ import pickle
 
 from tqdm.auto import tqdm
 import numpy as np
-from rdkit import Chem
+from rdkit import Chem, RDLogger
 from rdkit.Chem.rdchem import BondType, HybridizationType
 import torch
 from torch_scatter import scatter
 
+RDLogger.DisableLog('rdApp.*')
 
 KMAP = {'Ki': 1, 'Kd': 2, 'IC50': 3}
 
@@ -72,8 +73,9 @@ def process_item(item, args):
                 f.write(pdb_block_pocket)
         return pocket_path, ligand_path, res, pka, kind
 
-    except Exception:
+    except Exception as e:
         print('Exception occured.', item)
+        print(e)
         return None, ligand_path, res, pka, kind
     
 
@@ -238,17 +240,17 @@ class PDBProtein(object):
 
     def to_dict_atom(self):
         return {
-            'element': np.array(self.element, dtype=np.long),
+            'element': np.array(self.element, dtype=np.int64),
             'molecule_name': self.title,
             'pos': np.array(self.pos, dtype=np.float32),
             'is_backbone': np.array(self.is_backbone, dtype=np.bool),
             'atom_name': self.atom_name,
-            'atom_to_aa_type': np.array(self.atom_to_aa_type, dtype=np.long)
+            'atom_to_aa_type': np.array(self.atom_to_aa_type, dtype=np.int64)
         }
 
     def to_dict_residue(self):
         return {
-            'amino_acid': np.array(self.amino_acid, dtype=np.long),
+            'amino_acid': np.array(self.amino_acid, dtype=np.int64),
             'center_of_mass': np.array(self.center_of_mass, dtype=np.float32),
             'pos_CA': np.array(self.pos_CA, dtype=np.float32),
             'pos_C': np.array(self.pos_C, dtype=np.float32),
@@ -319,7 +321,7 @@ def parse_sdf_file_mol(path, heavy_only=True, mol=None):
         accum_pos += np.array([x, y, z]) * atomic_weight
         accum_mass += atomic_weight
     center_of_mass = np.array(accum_pos / accum_mass, dtype=np.float32)
-    element = np.array(element, dtype=np.int)
+    element = np.array(element, dtype=np.int64)
     pos = np.array(pos, dtype=np.float32)
 
     row, col, edge_type = [], [], []
@@ -329,8 +331,8 @@ def parse_sdf_file_mol(path, heavy_only=True, mol=None):
         row += [start, end]
         col += [end, start]
         edge_type += 2 * [BOND_TYPES[bond.GetBondType()]]
-    edge_index = np.array([row, col], dtype=np.long)
-    edge_type = np.array(edge_type, dtype=np.long)
+    edge_index = np.array([row, col], dtype=np.int64)
+    edge_type = np.array(edge_type, dtype=np.int64)
     perm = (edge_index[0] * num_atoms + edge_index[1]).argsort()
     edge_index = edge_index[:, perm]
     edge_type = edge_type[perm]
@@ -371,7 +373,7 @@ def get_ligand_atom_features(rdmol):
     col = torch.tensor(col, dtype=torch.long)
     hs = (node_type == 1).to(torch.float)
     num_hs = scatter(hs[row], col, dim_size=num_atoms).numpy()
-    feat_mat = np.array([atomic_number, aromatic, degree, num_hs, hybrid], dtype=np.long).transpose()
+    feat_mat = np.array([atomic_number, aromatic, degree, num_hs, hybrid], dtype=np.int64).transpose()
     return feat_mat
 
 
