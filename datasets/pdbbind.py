@@ -339,28 +339,32 @@ class PDBBindDataset(Dataset):
             print('Load embedding from ', self.emb_path)
             self.emb = torch.load(self.emb_path)
 
-    def _is_valid_lmbd(self):
-        """
-            Check if the lmdb file is valid.
-        """
-        if not os.path.exists(self.processed_path):
-            return False
-        try:
-            db = lmdb.open(
-                self.processed_path,
-                create=False,
-                subdir=False,
-                readonly=True,
-                lock=False,
-                readahead=False,
-                meminit=False,
-            )
-            with db.begin() as txn:
-                txn.cursor().iternext(values=False)
-            db.close()
-            return True
-        except lmdb.Error:
-            return False
+    def _is_valid_lmdb(self, min_data_points=100):
+    """Check if the LMDB file is valid and contains at least 'min_data_points' entries."""
+    if not os.path.exists(self.processed_path):
+        return False
+
+    try:
+        db = lmdb.open(
+            self.processed_path,
+            create=False,
+            subdir=False,
+            readonly=True,
+            lock=False,
+            readahead=False,
+            meminit=False,
+        )
+        with db.begin() as txn:
+            cursor = txn.cursor()
+            data_count = 0
+            for _ in cursor:
+                data_count += 1
+                if data_count >= min_data_points:
+                    break
+        db.close()
+        return data_count >= min_data_points
+    except lmdb.Error:
+        return False
 
     def _delete_lmdb(self):
         """Delete the existing LMDB file."""
@@ -369,24 +373,6 @@ class PDBBindDataset(Dataset):
             print('Invalid LMDB file removed:', self.processed_path)
         except OSError as e:
             print(f"Error: {self.processed_path} : {e.strerror}")
-
-    def _connect_db(self):
-        """
-            Establish read-only database connection
-        """
-        assert self.db is None, 'A connection has already been opened.'
-        self.db = lmdb.open(
-            self.processed_path,
-            map_size=10*(1024**3), # 10GB
-            create=False,
-            subdir=False,
-            readonly=True,
-            lock=False,
-            readahead=False,
-            meminit=False,
-        )
-        with self.db.begin() as txn:
-            self.keys = list(txn.cursor().iternext(values=False))
 
     def _close_db(self):
         self.db.close()
