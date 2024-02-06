@@ -3,7 +3,7 @@ import pickle
 
 import numpy as np
 import lmdb
-import tqdm
+from tqdm.auto import tqdm
 import torch
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
@@ -328,15 +328,47 @@ class PDBBindDataset(Dataset):
         self.transform = transform
         self.heavy_only = heavy_only
         self.db = None
-
         self.keys = None
 
-        if not os.path.exists(self.processed_path):
+        if not self._is_valid_lmdb():
+            self._delete_lmdb()
             self._process()
+
         print('Load dataset from ', self.processed_path)
         if self.emb_path is not None:
             print('Load embedding from ', self.emb_path)
             self.emb = torch.load(self.emb_path)
+
+    def _is_valid_lmbd(self):
+        """
+            Check if the lmdb file is valid.
+        """
+        if not os.path.exists(self.processed_path):
+            return False
+        try:
+            db = lmdb.open(
+                self.processed_path,
+                create=False,
+                subdir=False,
+                readonly=True,
+                lock=False,
+                readahead=False,
+                meminit=False,
+            )
+            with db.begin() as txn:
+                txn.cursor().iternext(values=False)
+            db.close()
+            return True
+        except lmdb.Error:
+            return False
+
+    def _delete_lmdb(self):
+        """Delete the existing LMDB file."""
+        try:
+            os.remove(self.processed_path)
+            print('Invalid LMDB file removed:', self.processed_path)
+        except OSError as e:
+            print(f"Error: {self.processed_path} : {e.strerror}")
 
     def _connect_db(self):
         """
