@@ -19,10 +19,8 @@ KMAP = {'Ki': 1, 'Kd': 2, 'IC50': 3}
 
 def parse_pdbbind_index_file(raw_path, subset='refined'):
     all_index = []
-    version = int(raw_path.rstrip('/')[-4:])
-    print(raw_path)
-    print(version)
-    # assert version >= 2016
+    version = int(raw_path[-4:])
+    assert version >= 2016
     if subset == 'refined':
         data_path = os.path.join(raw_path, f'refined-set')
         index_path = os.path.join(data_path, 'index', f'INDEX_refined_data.{version}')
@@ -39,7 +37,7 @@ def parse_pdbbind_index_file(raw_path, subset='refined'):
         if line.startswith('#'): continue
         index, res, year, pka, kv = line.split('//')[0].strip().split()
         kind = [v for k, v in KMAP.items() if k in kv]
-        assert len(kind) == 1,
+        assert len(kind) == 1
         if index in all_files:
             all_index.append([index, res, year, pka, kind[0]])
     return all_index
