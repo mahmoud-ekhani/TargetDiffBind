@@ -341,30 +341,30 @@ class PDBBindDataset(Dataset):
 
     def _is_valid_lmdb(self, min_data_points=100):
     """Check if the LMDB file is valid and contains at least 'min_data_points' entries."""
-    if not os.path.exists(self.processed_path):
-        return False
+        if not os.path.exists(self.processed_path):
+            return False
 
-    try:
-        db = lmdb.open(
-            self.processed_path,
-            create=False,
-            subdir=False,
-            readonly=True,
-            lock=False,
-            readahead=False,
-            meminit=False,
-        )
-        with db.begin() as txn:
-            cursor = txn.cursor()
-            data_count = 0
-            for _ in cursor:
-                data_count += 1
-                if data_count >= min_data_points:
-                    break
-        db.close()
-        return data_count >= min_data_points
-    except lmdb.Error:
-        return False
+        try:
+            db = lmdb.open(
+                self.processed_path,
+                create=False,
+                subdir=False,
+                readonly=True,
+                lock=False,
+                readahead=False,
+                meminit=False,
+            )
+            with db.begin() as txn:
+                cursor = txn.cursor()
+                data_count = 0
+                for _ in cursor:
+                    data_count += 1
+                    if data_count >= min_data_points:
+                        break
+            db.close()
+            return data_count >= min_data_points
+        except lmdb.Error:
+            return False
 
     def _delete_lmdb(self):
         """Delete the existing LMDB file."""
