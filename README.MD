@@ -44,8 +44,8 @@ For example, using the PDBBind v2020 dataset, the following steps are needed:
    mkdir -p data/pdbbind_v2020 && tar -xzvf data/pdbbind_v2020_refined.tar.gz -C data/pdbbind_v2020
    ```
 
-2. **Extracting Pockets and Dataset Splitting**:
-   Use the following command to extract 10A pockets and split the dataset. Replace `{YEAR}` with the dataset year.
+2. **Extracting Pockets**:
+   Use the following command to extract 10A pockets. Replace `{YEAR}` with the dataset year.
    ```bash
    python utils/extract_pdbbind_pockets.py --source data/pdbbind_v{YEAR} --subset refined --refined_index_pkl data/pdbbind_v{YEAR}/pocket_10_refined/index.pkl
    ```
@@ -53,3 +53,13 @@ For example, using the PDBBind v2020 dataset, the following steps are needed:
    ```bash
    python utils/extract_pdbbind_pockets.py --source data/pdbbind_v2020 --subset refined --refined_index_pkl data/pdbbind_v2020/pocket_10_refined/index.pkl
    ```
+3. **Dataset Splitting**:
+   Use the following command to split the dataset. Replace `{YEAR}` with the dataset year.
+   ```bash
+   python utils/pdbbind_split.py --index_path data/pdbbind_v{YEAR}/pocket_10_refined/index.pkl 
+   ```
+   For PDBBind v2020, it becomes:
+   ```bash
+    python utils/pdbbind_split.py --index_path data/pdbbind_v2020/pocket_10_refined/index.pkl 
+   ```
+
