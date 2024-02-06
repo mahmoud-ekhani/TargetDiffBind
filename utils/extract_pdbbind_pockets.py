@@ -20,7 +20,9 @@ KMAP = {'Ki': 1, 'Kd': 2, 'IC50': 3}
 def parse_pdbbind_index_file(raw_path, subset='refined'):
     all_index = []
     version = int(raw_path.rstrip('/')[-4:])
-    assert version >= 2016
+    print(raw_path)
+    print(version)
+    # assert version >= 2016
     if subset == 'refined':
         data_path = os.path.join(raw_path, f'refined-set')
         index_path = os.path.join(data_path, 'index', f'INDEX_refined_data.{version}')
@@ -37,7 +39,7 @@ def parse_pdbbind_index_file(raw_path, subset='refined'):
         if line.startswith('#'): continue
         index, res, year, pka, kv = line.split('//')[0].strip().split()
         kind = [v for k, v in KMAP.items() if k in kv]
-        assert len(kind) == 1
+        assert len(kind) == 1,
         if index in all_files:
             all_index.append([index, res, year, pka, kind[0]])
     return all_index
@@ -377,18 +379,18 @@ def get_ligand_atom_features(rdmol):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--source', type=str, default='ml_data/mahmoud/pdbbind/pdbbind_v2020')
+    parser.add_argument('--source', type=str, default='ml-data/mahmoud/pdbbind/pdbbind_v2020')
     parser.add_argument('--subset', type=str, default='refined')
     parser.add_argument('--refined_index_pkl', type=str, default=None)
     parser.add_argument('--radius', type=int, default=10)
     parser.add_argument('--num_workers', type=int, default=os.cpu_count())
     args = parser.parse_args()
-
+    
     index = parse_pdbbind_index_file(args.source, args.subset)
 
     pool = mp.Pool(args.num_workers)
     index_pocket = []
-    for item_pocket in tqdm(pool.imap_unordered(partial(process_item, args=args))):
+    for item_pocket in tqdm(pool.imap_unordered(partial(process_item, args=args), index), total=len(index)):
         index_pocket.append(item_pocket)
     pool.close()
 
