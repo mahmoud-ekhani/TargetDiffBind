@@ -48,7 +48,7 @@ def get_ligand_atom_features(rdmol):
     col = torch.tensor(col, dtype=torch.long)
     hs = (node_type == 1).to(torch.float)
     num_hs = scatter(hs[row], col, dim_size=num_atoms).numpy()
-    feat_mat = np.array([atomic_number, aromatic, degree, num_hs, hybrid], dtype=np.long).transpose()
+    feat_mat = np.array([atomic_number, aromatic, degree, num_hs, hybrid], dtype=np.int64).transpose()
     return feat_mat
 
 
@@ -93,8 +93,8 @@ def parse_sdf_file_mol(path, heavy_only=True, mol=None):
         row += [start, end]
         col += [end, start]
         edge_type += 2 * [BOND_TYPES[bond.GetBondType()]]
-    edge_index = np.array([row, col], dtype=np.long)
-    edge_type = np.array(edge_type, dtype=np.long)
+    edge_index = np.array([row, col], dtype=np.int64)
+    edge_type = np.array(edge_type, dtype=np.int64)
     perm = (edge_index[0] * num_atoms + edge_index[1]).argsort()
     edge_index = edge_index[:, perm]
     edge_type = edge_type[perm]
@@ -238,17 +238,17 @@ class PDBProtein(object):
 
     def to_dict_atom(self):
         return {
-            'element': np.array(self.element, dtype=np.long),
+            'element': np.array(self.element, dtype=np.int64),
             'molecule_name': self.title,
             'pos': np.array(self.pos, dtype=np.float32),
             'is_backbone': np.array(self.is_backbone, dtype=np.bool),
             'atom_name': self.atom_name,
-            'atom_to_aa_type': np.array(self.atom_to_aa_type, dtype=np.long)
+            'atom_to_aa_type': np.array(self.atom_to_aa_type, dtype=np.int64)
         }
 
     def to_dict_residue(self):
         return {
-            'amino_acid': np.array(self.amino_acid, dtype=np.long),
+            'amino_acid': np.array(self.amino_acid, dtype=np.int64),
             'center_of_mass': np.array(self.center_of_mass, dtype=np.float32),
             'pos_CA': np.array(self.pos_CA, dtype=np.float32),
             'pos_C': np.array(self.pos_C, dtype=np.float32),
@@ -338,9 +338,9 @@ class PDBBindDataset(Dataset):
         if self.emb_path is not None:
             print('Load embedding from ', self.emb_path)
             self.emb = torch.load(self.emb_path)
-
+    
     def _is_valid_lmdb(self, min_data_points=100):
-    """Check if the LMDB file is valid and contains at least 'min_data_points' entries."""
+        """Check if the LMDB file is valid and contains at least 'min_data_points' entries."""
         if not os.path.exists(self.processed_path):
             return False
 
