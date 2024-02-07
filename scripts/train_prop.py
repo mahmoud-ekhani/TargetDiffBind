@@ -1,18 +1,21 @@
 import argparse
 import os
 import shutil
-from easydict import EasyDict
-from logging import Logger
+import warnings
 
+import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.transforms import Compose
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from rdkit.Chem.rdchem import HybridizationType
+from torch.optim.lr_scheduler import _LRScheduler
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 import utils.misc as utils_misc
 from datasets import get_dataset
+from models.prop_model import PropPredNet, PropPredNetEnc
 
 
 def load_configs(config_path):
@@ -23,17 +26,16 @@ def load_configs(config_path):
 
 def setup_logging(config_name, input_args, config):
     log_dir = utils_misc.get_new_log_dir(input_args.logdir, prefix=config_name, tag=input_args.tag)
-    # ckpt_dir = os.path.join(log_dir, 'checkpoints')
-    # os.makedirs(ckpt_dir, exist_ok=True)
+    ckpt_dir = os.path.join(log_dir, 'checkpoints')
+    os.makedirs(ckpt_dir, exist_ok=True)
     logger = utils_misc.get_logger('data', log_dir)
-    writer = torch.utils.tensorboard.SummaryWriter(log_dir)
+    writer = SummaryWriter(log_dir)
     logger.info(input_args)
     logger.info(config)
     shutil.copyfile(input_args.config, os.path.join(log_dir, os.path.basename(input_args.config)))
-    # shutil.copytree('models', os.path.join(log_dir, 'models'))
+    shutil.copytree('models', os.path.join(log_dir, 'models'))
 
     return logger, writer
-
 
 class ProteinLigandData(Data):
 
@@ -82,7 +84,6 @@ class FeaturizeProteinAtom(object):
         x = torch.cat([element, amino_acid, is_backbone], dim=-1)
         data.protein_atom_feature = x
         return data
-
 
 class FeaturizeLigandAtom(object):
     ATOM_FEATS = {'AtomicNumber': 1, 'Aromatic': 1, 'Degree': 6, 'NumHs': 6, 'Hybridization': len(HybridizationType.values)}
@@ -157,6 +158,137 @@ def get_model(config, protein_atom_feat_dim, ligand_atom_feat_dim):
     return model
 
 
+def get_optimizer(cfg, model):
+    if cfg.type == 'adam':
+        return torch.optim.Adam(
+            model.parameters(),
+            lr=cfg.lr,
+            weight_decay=cfg.weight_decay,
+            betas=(cfg.beta1, cfg.beta2,)
+        )
+    else:
+        raise NotImplementedError('Optimizer not supported: %s' % cfg.type)
+    
+
+def get_scheduler(cfg, optimizer):
+    if cfg.type == 'plateau':
+        return ReduceLROnPlateau(
+            optimizer,
+            factor=cfg.factor,
+            patience=cfg.patience,
+            min_lr=cfg.min_lr
+        )
+    elif cfg.type == 'warmup_plateau':
+        return GradualWarmupScheduler(
+            optimizer,
+            multiplier=cfg.multiplier,
+            total_epoch=cfg.total_epoch,
+            after_scheduler=ReduceLROnPlateau(
+                optimizer,
+                factor=cfg.factor,
+                patience=cfg.patience,
+                min_lr=cfg.min_lr
+            )
+        )
+    elif cfg.type == 'expmin':
+        return ExponentialLR_with_minLr(
+            optimizer,
+            gamma=cfg.factor,
+            min_lr=cfg.min_lr,
+        )
+    elif cfg.type == 'expmin_milestone':
+        gamma = np.exp(np.log(cfg.factor) / cfg.milestone)
+        return ExponentialLR_with_minLr(
+            optimizer,
+            gamma=gamma,
+            min_lr=cfg.min_lr,
+        )
+    else:
+        raise NotImplementedError('Scheduler not supported: %s' % cfg.type)
+    
+
+class GradualWarmupScheduler(_LRScheduler):
+    """ Gradually warm-up(increasing) learning rate in optimizer.
+    Proposed in 'Accurate, Large Minibatch SGD: Training ImageNet in 1 Hour'.
+    Args:
+        optimizer (Optimizer): Wrapped optimizer.
+        multiplier: target learning rate = base lr * multiplier if multiplier > 1.0. if multiplier = 1.0, lr starts from 0 and ends up with the base_lr.
+        total_epoch: target learning rate is reached at total_epoch, gradually
+        after_scheduler: after target_epoch, use this scheduler(eg. ReduceLROnPlateau)
+    """
+
+    def __init__(self, optimizer, multiplier, total_epoch, after_scheduler=None):
+        self.multiplier = multiplier
+        if self.multiplier < 1.:
+            raise ValueError('multiplier should be greater thant or equal to 1.')
+        self.total_epoch = total_epoch
+        self.after_scheduler = after_scheduler
+        self.finished = False
+        super(GradualWarmupScheduler, self).__init__(optimizer)
+
+    def get_lr(self):
+        if self.last_epoch > self.total_epoch:
+            if self.after_scheduler:
+                if not self.finished:
+                    self.after_scheduler.base_lrs = [base_lr * self.multiplier for base_lr in self.base_lrs]
+                    self.finished = True
+                return self.after_scheduler.get_last_lr()
+            return [base_lr * self.multiplier for base_lr in self.base_lrs]
+
+        if self.multiplier == 1.0:
+            return [base_lr * (float(self.last_epoch) / self.total_epoch) for base_lr in self.base_lrs]
+        else:
+            return [base_lr * ((self.multiplier - 1.) * self.last_epoch / self.total_epoch + 1.) for base_lr in self.base_lrs]
+
+    def step_ReduceLROnPlateau(self, metrics, epoch=None):
+        if epoch is None:
+            epoch = self.last_epoch + 1
+        self.last_epoch = epoch if epoch != 0 else 1  # ReduceLROnPlateau is called at the end of epoch, whereas others are called at beginning
+        if self.last_epoch <= self.total_epoch:
+            warmup_lr = [base_lr * ((self.multiplier - 1.) * self.last_epoch / self.total_epoch + 1.) for base_lr in self.base_lrs]
+            for param_group, lr in zip(self.optimizer.param_groups, warmup_lr):
+                param_group['lr'] = lr
+        else:
+            if epoch is None:
+                self.after_scheduler.step(metrics, None)
+            else:
+                self.after_scheduler.step(metrics, epoch - self.total_epoch)
+
+    def step(self, epoch=None, metrics=None):
+        if type(self.after_scheduler) != ReduceLROnPlateau:
+            if self.finished and self.after_scheduler:
+                if epoch is None:
+                    self.after_scheduler.step(None)
+                else:
+                    self.after_scheduler.step(epoch - self.total_epoch)
+                self._last_lr = self.after_scheduler.get_last_lr()
+            else:
+                return super(GradualWarmupScheduler, self).step(epoch)
+        else:
+            self.step_ReduceLROnPlateau(metrics, epoch)
+
+
+# customize exp lr scheduler with min lr
+class ExponentialLR_with_minLr(torch.optim.lr_scheduler.ExponentialLR):
+    def __init__(self, optimizer, gamma, min_lr=1e-4, last_epoch=-1, verbose=False):
+        self.gamma = gamma
+        self.min_lr = min_lr
+        super(ExponentialLR_with_minLr, self).__init__(optimizer, gamma, last_epoch, verbose)
+
+    def get_lr(self):
+        if not self._get_lr_called_within_step:
+            warnings.warn("To get the last learning rate computed by the scheduler, "
+                          "please use `get_last_lr()`.", UserWarning)
+
+        if self.last_epoch == 0:
+            return self.base_lrs
+        return [max(group['lr'] * self.gamma, self.min_lr)
+                for group in self.optimizer.param_groups]
+
+    def _get_closed_form_lr(self):
+        return [max(base_lr * self.gamma ** self.last_epoch, self.min_lr)
+                for base_lr in self.base_lrs]
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -199,3 +331,9 @@ if __name__ == '__main__':
     # Model
     logger.info('Building model ...')
     model = get_model(config, portein_featurizer.feature_dim, ligand_featurizer.feature_dim)
+    model = model.to(args.device)
+    logger.info(f"# trainable parameters: {utils_misc.count_parameters(model) / 1e6:.4f} M")
+
+    # Optimizer and scheduler
+    optimizer = get_optimizer(config.train.optimizer, model)
+    scheduler = get_scheduler(config.train.scheduler, optimizer)
