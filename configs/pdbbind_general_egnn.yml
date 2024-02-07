@@ -14,7 +14,7 @@ model:
 train:
   seed: 2021
   batch_size: 4
-  num_workers: 4
+  num_workers: 8
   max_epochs: 200
   report_iter: 200
   val_freq: 1
