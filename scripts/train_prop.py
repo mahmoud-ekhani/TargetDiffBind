@@ -1,6 +1,5 @@
 import argparse
 import os
-from typing import Tuple
 import shutil
 from easydict import EasyDict
 from logging import Logger
@@ -8,91 +7,118 @@ from logging import Logger
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.transforms import Compose
+from torch_geometric.data import Data
+from rdkit.Chem.rdchem import HybridizationType
 
 import utils.misc as utils_misc
-import utils.transforms_prop as utils_trans
 from datasets import get_dataset
 
 
-def load_configs(config_path: str) -> Tuple[EasyDict, str]:
-    """
-    Loads a configuration file from the specified path and returns the configuration along with its name.
-
-    This function is designed to load a configuration file, typically in JSON or YAML format, and
-    extract its name (without the file extension) for further use.
-
-    Args:
-        config_path (str): The path to the configuration file. This should be a relative or absolute path.
-
-    Returns:
-        Tuple[dict, str]: A tuple containing two elements:
-            - The first element is a dictionary with the contents of the configuration file.
-            - The second element is a string representing the name of the configuration file, without its extension.
-
-    Raises:
-        FileNotFoundError: If the specified configuration file does not exist.
-        ValueError: If the file extension cannot be determined.
-
-    Example:
-        config, config_name = load_configs('configs/my_config.yaml')
-        # `config` is now a dictionary with the contents of 'my_config.yaml'
-        # `config_name` is the string 'my_config'
-
-    Note:
-        The function assumes that the configuration file can be loaded into a dictionary. It relies on the
-        `utils_misc.load_config` function, which should be capable of handling the file format of the configuration.
-    """
+def load_configs(config_path):
     config = utils_misc.load_config(config_path)
     config_name = os.path.basename(config_path)[:os.path.basename(config_path).rfind('.')]
-
     return config, config_name
 
 
-def setup_logging(
-    config_name: str, 
-    input_args: argparse.Namespace, 
-    config: EasyDict
-) -> Tuple[Logger, SummaryWriter]:
-    """
-    Sets up logging and TensorBoard writer for a training session, including creating 
-    directories for logs and checkpoints, initializing a logger, and saving configuration files.
-
-    Args:
-        config_name (str): The name of the configuration, used as a prefix for the log directory.
-        input_args (argparse.Namespace): Parsed command-line arguments.
-        config (EasyDict): Configuration parameters, typically loaded from a config file.
-
-    Returns:
-        Tuple[Logger, SummaryWriter]: A tuple containing a logger instance set up for logging 
-        training information and a TensorBoard SummaryWriter instance.
-
-    Side Effects:
-        - Creates a new logging directory with a unique name based on `config_name` and `tag`.
-        - Creates a subdirectory 'checkpoints' within the logging directory.
-        - Initializes a TensorBoard SummaryWriter.
-        - Logs the command-line arguments and configuration parameters.
-        - Copies the configuration file to the logging directory.
-        - Copies the 'models' directory to the logging directory.
-    """
+def setup_logging(config_name, input_args, config):
     log_dir = utils_misc.get_new_log_dir(input_args.logdir, prefix=config_name, tag=input_args.tag)
-    ckpt_dir = os.path.join(log_dir, 'checkpoints')
-    os.makedirs(ckpt_dir, exist_ok=True)
-    logger = utils_misc.get_logger('train', log_dir)
+    # ckpt_dir = os.path.join(log_dir, 'checkpoints')
+    # os.makedirs(ckpt_dir, exist_ok=True)
+    logger = utils_misc.get_logger('data', log_dir)
     writer = torch.utils.tensorboard.SummaryWriter(log_dir)
     logger.info(input_args)
     logger.info(config)
     shutil.copyfile(input_args.config, os.path.join(log_dir, os.path.basename(input_args.config)))
-    shutil.copytree('models', os.path.join(log_dir, 'models'))
+    # shutil.copytree('models', os.path.join(log_dir, 'models'))
 
     return logger, writer
 
 
+class ProteinLigandData(Data):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    @staticmethod
+    def from_protein_ligand_dicts(protein_dict=None, ligand_dict=None, **kwargs):
+        instance = ProteinLigandData(**kwargs)
+
+        if protein_dict is not None:
+            for key, item in protein_dict.items():
+                instance['protein_' + key] = item
+
+        if ligand_dict is not None:
+            for key, item in ligand_dict.items():
+                instance['ligand_' + key] = item
+
+        instance['ligand_nbh_list'] = {i.item(): [j.item() for k, j in enumerate(instance.ligand_bond_index[1])
+                                                  if instance.ligand_bond_index[0, k].item() == i]
+                                       for i in instance.ligand_bond_index[0]}
+        return instance
+
+    def __inc__(self, key, value, *args, **kwargs):
+        if key == 'ligand_bond_index':
+            return self['ligand_element'].size(0)
+        else:
+            return super().__inc__(key, value)
+
+
+class FeaturizeProteinAtom(object):
+
+    def __init__(self):
+        super().__init__()
+        self.atomic_numbers = torch.LongTensor([1, 6, 7, 8, 16, 34])    # H, C, N, O, S, Se
+        self.max_num_aa = 20
+
+    @property
+    def feature_dim(self):
+        return self.atomic_numbers.size(0) + self.max_num_aa + 1
+
+    def __call__(self, data: ProteinLigandData):
+        element = data.protein_element.view(-1, 1) == self.atomic_numbers.view(1, -1)   # (N_atoms, N_elements)
+        amino_acid = F.one_hot(data.protein_atom_to_aa_type, num_classes=self.max_num_aa)
+        is_backbone = data.protein_is_backbone.view(-1, 1).long()
+        x = torch.cat([element, amino_acid, is_backbone], dim=-1)
+        data.protein_atom_feature = x
+        return data
+
+
+class FeaturizeLigandAtom(object):
+    ATOM_FEATS = {'AtomicNumber': 1, 'Aromatic': 1, 'Degree': 6, 'NumHs': 6, 'Hybridization': len(HybridizationType.values)}
     
+    def __init__(self):
+        super().__init__()
+        self.atomic_numbers = torch.LongTensor([1, 6, 7, 8, 9, 15, 16, 17])  # H, C, N, O, F, P, S, Cl
+
+    @property
+    def num_properties(self):
+        return sum(self.ATOM_FEATS.values())
+
+    @property
+    def feature_dim(self):
+        return self.atomic_numbers.size(0) + self.num_properties
+
+    def __call__(self, data: ProteinLigandData):
+        element = data.ligand_element.view(-1, 1) == self.atomic_numbers.view(1, -1)   # (N_atoms, N_elements)
+        # convert some features to one-hot vectors
+        atom_feature = []
+        for i, (k, v) in enumerate(self.ATOM_FEATS.items()):
+            feat = data.ligand_atom_feature[:, i:i+1]
+            if v > 1:
+                feat = (feat == torch.LongTensor(list(range(v))).view(1, -1))
+            else:
+                if k == 'AtomicNumber':
+                    feat = feat / 100.
+            atom_feature.append(feat)
+
+        atom_feature = torch.cat(atom_feature, dim=-1)
+        data.ligand_atom_feature_full = torch.cat([element, atom_feature], dim=-1)
+        return data
 
 
-def main():
+if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('config', type=str)
+    parser.add_argument('--config', type=str, default='configs/pdbbind_general_egnn.yml')
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--logdir', type=str, default='logs')
     parser.add_argument('--tag', type=str, default='')
@@ -108,8 +134,8 @@ def main():
     logger, writer = setup_logging(config_name, args, config)
 
     # Data transformers 
-    portein_featurizer = utils_trans.FeaturizeProteinAtom()
-    ligand_featurizer = utils_trans.FeaturizeLigandAtom()
+    portein_featurizer = FeaturizeProteinAtom()
+    ligand_featurizer = FeaturizeLigandAtom()
     transform = Compose([
         portein_featurizer,
         ligand_featurizer,
@@ -125,4 +151,4 @@ def main():
     )
 
     train_set, val_set, test_set = subsets['train'], subsets['val'], subsets['test']
-        logger.info(f'Train set: {len(train_set)} Val set: {len(val_set)} Test set: {len(test_set)}')
+    logger.info(f'Train set: {len(train_set)} Val set: {len(val_set)} Test set: {len(test_set)}')
