@@ -374,6 +374,24 @@ class PDBBindDataset(Dataset):
         except OSError as e:
             print(f"Error: {self.processed_path} : {e.strerror}")
 
+    def _connect_db(self):
+        """
+            Establish read-only database connection
+        """
+        assert self.db is None, 'A connection has already been opened.'
+        self.db = lmdb.open(
+            self.processed_path,
+            map_size=10*(1024*1024*1024),   # 10GB
+            create=False,
+            subdir=False,
+            readonly=True,
+            lock=False,
+            readahead=False,
+            meminit=False,
+        )
+        with self.db.begin() as txn:
+            self.keys = list(txn.cursor().iternext(values=False))
+
     def _close_db(self):
         self.db.close()
         self.db = None
