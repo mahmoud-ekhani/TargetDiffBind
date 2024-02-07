@@ -5,6 +5,7 @@ import warnings
 
 import numpy as np
 import torch
+from torch.nn.utils import clip_grad_norm_
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.transforms import Compose
 from torch_geometric.data import Data
@@ -12,11 +13,15 @@ from torch_geometric.loader import DataLoader
 from rdkit.Chem.rdchem import HybridizationType
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from tqdm.auto import tqdm
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from scipy.stats import pearsonr, spearmanr
 
 import utils.misc as utils_misc
 from datasets import get_dataset
 from models.prop_model import PropPredNet, PropPredNetEnc
 
+KMAP = {'Ki': 1, 'Kd': 2, 'IC50': 3}
 
 def load_configs(config_path):
     config = utils_misc.load_config(config_path)
@@ -35,7 +40,7 @@ def setup_logging(config_name, input_args, config):
     shutil.copyfile(input_args.config, os.path.join(log_dir, os.path.basename(input_args.config)))
     shutil.copytree('models', os.path.join(log_dir, 'models'))
 
-    return logger, writer
+    return logger, writer, log_dir, ckpt_dir
 
 class ProteinLigandData(Data):
 
@@ -288,6 +293,24 @@ class ExponentialLR_with_minLr(torch.optim.lr_scheduler.ExponentialLR):
     def _get_closed_form_lr(self):
         return [max(base_lr * self.gamma ** self.last_epoch, self.min_lr)
                 for base_lr in self.base_lrs]
+    
+
+def get_eval_scores(ypred_arr, ytrue_arr, logger, prefix='All'):
+    if len(ypred_arr) == 0:
+        return None
+    rmse = np.sqrt(mean_squared_error(ytrue_arr, ypred_arr))
+    mae = mean_absolute_error(ytrue_arr, ypred_arr)
+    r2 = r2_score(ytrue_arr, ypred_arr)
+    pearson, ppval = pearsonr(ytrue_arr, ypred_arr)
+    spearman, spval = spearmanr(ytrue_arr, ypred_arr)
+    mean = np.mean(ypred_arr)
+    std = np.std(ypred_arr)
+    logger.info("Evaluation Summary:")
+    logger.info(
+        "[%4s] num: %3d, RMSE: %.3f, MAE: %.3f, "
+        "R^2 score: %.3f, Pearson: %.3f, Spearman: %.3f, mean/std: %.3f/%.3f" % (
+            prefix, len(ypred_arr), rmse, mae, r2, pearson, spearman, mean, std))
+    return rmse
 
 
 if __name__ == '__main__':
@@ -305,7 +328,7 @@ if __name__ == '__main__':
     utils_misc.seed_all(config.train.seed)
 
     # Set up the logging and TensorBoard Writer
-    logger, writer = setup_logging(config_name, args, config)
+    logger, writer, log_dir, ckpt_dir = setup_logging(config_name, args, config)
 
     # Data transformers 
     portein_featurizer = FeaturizeProteinAtom()
@@ -337,3 +360,106 @@ if __name__ == '__main__':
     # Optimizer and scheduler
     optimizer = get_optimizer(config.train.optimizer, model)
     scheduler = get_scheduler(config.train.scheduler, optimizer)
+
+
+    def train(epoch):
+        model.train()
+        optimizer.zero_grad()
+        it = 0
+        num_it = len(train_loader)
+        for batch in tqdm(train_loader, dynamic_ncols=True, desc=f'Epoch {epoch}', position=1):
+            it += 1
+            batch = batch.to(args.device)
+            # compute loss
+            loss = model.get_loss(batch, pos_noise_std=config.train.pos_noise_std)
+            loss.backward()
+            orig_grad_norm = clip_grad_norm_(model.parameters(), config.train.max_grad_norm)
+            optimizer.step()
+            optimizer.zero_grad()
+
+            if it % config.train.report_iter == 0:
+                logger.info('[Train] Epoch %03d Iter %04d | Loss %.6f | Lr %.4f * 1e-3' % (
+                    epoch, it, loss.item(), optimizer.param_groups[0]['lr'] * 1000
+                ))
+
+            writer.add_scalar('train/loss', loss, it + epoch * num_it)
+            writer.add_scalar('train/lr', optimizer.param_groups[0]['lr'], it + epoch * num_it)
+            writer.add_scalar('train/grad', orig_grad_norm, it + epoch * num_it)
+            writer.flush()
+
+    def validate(epoch, data_loader, scheduler, writer, prefix='Validate'):
+        sum_loss, sum_n = 0, 0
+        ytrue_arr, ypred_arr = [], []
+        y_kind = []
+        with torch.no_grad():
+            model.eval()
+            for batch in tqdm(data_loader, desc=prefix):
+                batch = batch.to(args.device)
+                loss, pred = model.get_loss(batch, pos_noise_std=0., return_pred=True)
+                sum_loss += loss.item() * len(batch.y)
+                sum_n += len(batch.y)
+                ypred_arr.append(pred.view(-1))
+                ytrue_arr.append(batch.y)
+                y_kind.append(batch.kind)
+        avg_loss = sum_loss / sum_n
+        logger.info('[%s] Epoch %03d | Loss %.6f' % (
+            prefix, epoch, avg_loss,
+        ))
+        ypred_arr = torch.cat(ypred_arr).cpu().numpy().astype(np.float64)
+        ytrue_arr = torch.cat(ytrue_arr).cpu().numpy().astype(np.float64)
+        y_kind = torch.cat(y_kind).cpu().numpy()
+        rmse = get_eval_scores(ypred_arr, ytrue_arr, logger)
+        for k, v in KMAP.items():
+            get_eval_scores(ypred_arr[y_kind == v], ytrue_arr[y_kind == v], logger, prefix=k)
+
+        if scheduler:
+            if config.train.scheduler.type == 'plateau':
+                scheduler.step(avg_loss)
+            elif config.train.scheduler.type == 'warmup_plateau':
+                scheduler.step_ReduceLROnPlateau(avg_loss)
+            else:
+                scheduler.step()
+
+        if writer:
+            writer.add_scalar('val/loss', avg_loss, epoch)
+            writer.add_scalar('val/rmse', rmse, epoch)
+            writer.flush()
+
+        return avg_loss
+    
+    try:
+        best_val_loss = float('inf')
+        best_val_epoch = 0
+        patience = 0
+        for epoch in range(1, config.train.max_epochs + 1):
+            # with torch.autograd.detect_anomaly():
+            train(epoch)
+            if epoch % config.train.val_freq == 0 or epoch == config.train.max_epochs:
+                val_loss = validate(epoch, val_loader, scheduler, writer)
+                validate(epoch, test_loader, scheduler=None, writer=None, prefix='Test')
+
+                if val_loss < best_val_loss:
+                    patience = 0
+                    best_val_loss = val_loss
+                    best_val_epoch = epoch
+                    logger.info(f'Best val achieved at epoch {epoch}, val loss: {best_val_loss:.3f}')
+                    logger.info(f'Eval on Test set:')
+                    validate(epoch, test_loader, scheduler=None, writer=None, prefix='Test')
+                    ckpt_path = os.path.join(ckpt_dir, '%d.pt' % epoch)
+                    torch.save({
+                        'config': config,
+                        'model': model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'scheduler': scheduler.state_dict(),
+                        'epoch': epoch,
+                    }, ckpt_path)
+                    logger.info(f'Model {log_dir}/{epoch}.pt saved!')
+                else:
+                    patience += 1
+                    logger.info(f'Val loss does not improve, patience: {patience} '
+                                f'(Best val loss: {best_val_loss:.3f} at epoch {best_val_epoch})')
+
+    except KeyboardInterrupt:
+        logger.info('Terminating...')
+
+    
