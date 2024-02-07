@@ -61,5 +61,6 @@ def get_logger(name, log_dir=None):
 
     return logger
 
-
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
