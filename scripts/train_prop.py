@@ -8,6 +8,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.transforms import Compose
 from torch_geometric.data import Data
+from torch_geometric.loader import DataLoader
 from rdkit.Chem.rdchem import HybridizationType
 
 import utils.misc as utils_misc
@@ -114,6 +115,24 @@ class FeaturizeLigandAtom(object):
         atom_feature = torch.cat(atom_feature, dim=-1)
         data.ligand_atom_feature_full = torch.cat([element, atom_feature], dim=-1)
         return data
+    
+
+def get_dataloader(train_set, val_set, test_set, config):
+    follow_batch = ['protein_element', 'ligand_element']
+    collate_exclude_keys = ['ligand_nbh_list']
+    train_loader = DataLoader(
+        train_set,
+        batch_size=config.train.batch_size,
+        shuffle=True,
+        num_workers=config.train.num_workers,
+        follow_batch=follow_batch,
+        exclude_keys=collate_exclude_keys
+    )
+    val_loader = DataLoader(val_set, config.train.batch_size, shuffle=False,
+                            follow_batch=follow_batch, exclude_keys=collate_exclude_keys)
+    test_loader = DataLoader(test_set, config.train.batch_size, shuffle=False,
+                             follow_batch=follow_batch, exclude_keys=collate_exclude_keys)
+    return train_loader, val_loader, test_loader
 
 
 if __name__ == '__main__':
@@ -152,3 +171,4 @@ if __name__ == '__main__':
 
     train_set, val_set, test_set = subsets['train'], subsets['val'], subsets['test']
     logger.info(f'Train set: {len(train_set)} Val set: {len(val_set)} Test set: {len(test_set)}')
+    train_loader, val_loader, test_loader = get_dataloader(train_set, val_set, test_set, config)
