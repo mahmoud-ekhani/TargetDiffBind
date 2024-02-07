@@ -135,6 +135,29 @@ def get_dataloader(train_set, val_set, test_set, config):
     return train_loader, val_loader, test_loader
 
 
+def get_model(config, protein_atom_feat_dim, ligand_atom_feat_dim):
+    if config.model.encoder.name == 'egnn_enc':
+        model = PropPredNetEnc(
+            config.model,
+            protein_atom_feature_dim=protein_atom_feat_dim,
+            ligand_atom_feature_dim=ligand_atom_feat_dim,
+            enc_ligand_dim=config.model.enc_ligand_dim,
+            enc_node_dim=config.model.enc_node_dim,
+            enc_graph_dim=config.model.enc_graph_dim,
+            enc_feature_type=config.model.enc_feature_type,
+            output_dim=1
+        )
+    else:
+        model = PropPredNet(
+            config.model,
+            protein_atom_feature_dim=protein_atom_feat_dim,
+            ligand_atom_feature_dim=ligand_atom_feat_dim,
+            output_dim=3
+        )
+    return model
+
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='configs/pdbbind_general_egnn.yml')
@@ -172,3 +195,7 @@ if __name__ == '__main__':
     train_set, val_set, test_set = subsets['train'], subsets['val'], subsets['test']
     logger.info(f'Train set: {len(train_set)} Val set: {len(val_set)} Test set: {len(test_set)}')
     train_loader, val_loader, test_loader = get_dataloader(train_set, val_set, test_set, config)
+
+    # Model
+    logger.info('Building model ...')
+    model = get_model(config, portein_featurizer.feature_dim, ligand_featurizer.feature_dim)
