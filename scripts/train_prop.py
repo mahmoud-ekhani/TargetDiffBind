@@ -24,6 +24,7 @@ from models.prop_model import PropPredNet, PropPredNetEnc
 
 KMAP = {'Ki': 1, 'Kd': 2, 'IC50': 3}
 
+
 def load_configs(config_path):
     config = utils_misc.load_config(config_path)
     config_name = os.path.basename(config_path)[:os.path.basename(config_path).rfind('.')]
@@ -42,6 +43,7 @@ def setup_logging(config_name, input_args, config):
     shutil.copytree('models', os.path.join(log_dir, 'models'))
 
     return logger, writer, log_dir, ckpt_dir
+
 
 class ProteinLigandData(Data):
 
@@ -81,7 +83,7 @@ class FeaturizeProteinAtom(object):
 
     @property
     def feature_dim(self):
-        return self.atomic_numbers.size(0) + self.max_num_aa + 1
+        return self.atomic_numbers.size(0) + self.max_num_aa + 1 # number of possible elements + number of possible amino acids + 1
 
     def __call__(self, data: ProteinLigandData):
         element = data.protein_element.view(-1, 1) == self.atomic_numbers.view(1, -1)   # (N_atoms, N_elements)
