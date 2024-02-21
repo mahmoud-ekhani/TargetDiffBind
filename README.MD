@@ -32,7 +32,6 @@ conda install rdkit openbabel tensorboard pyyaml easydict python-lmdb -c conda-f
 - Save the downloaded `refined` and `general` sets in the `data/pdbbind_v{YEAR}` directory, where `{YEAR}` corresponds to the version of the dataset (e.g., `2020`).
 
 #### Preparing the Data
-For example, using the PDBBind v2020 dataset, the following steps are needed:
 
 1. **Unzipping the Data**: 
    Create a directory for the dataset and extract the contents. Replace `{YEAR}` with the appropriate year.
